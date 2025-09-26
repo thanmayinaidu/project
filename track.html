@@ -339,3 +339,148 @@
       return (
         <div>
           {!editing ? (
+            <>
+              <div style={{fontWeight:700, marginBottom:6}}>{person.name}</div>
+              <div className="small" style={{marginBottom:6}}>{person.role} • {person.location}</div>
+              <div className="small" style={{marginBottom:6}}>Status: <strong>{person.status}</strong></div>
+              <div className="small" style={{marginBottom:6}}>Last seen: {new Date(person.lastSeen).toLocaleString()}</div>
+              <div style={{marginBottom:8}}>Notes: <div style={{padding:8,background:'#f8fafc',borderRadius:6,marginTop:6}}>{person.notes || <span className="small">No notes</span>}</div></div>
+              <div style={{display:'flex',gap:8}}>
+                <button className="secondary" onClick={()=>setEditing(true)}>Edit</button>
+                <button onClick={()=>onUpdate(person.id,{ status: person.status === 'Active' ? 'Idle' : 'Active', lastSeen: new Date().toISOString() })}>Toggle Status</button>
+                <button onClick={()=>{ if(confirm('Delete ' + person.name + '?')) onDelete(person.id); }} style={{borderColor:'#ffe7e7', color:'var(--danger)'}}>Delete</button>
+                <button className="secondary" onClick={onClose}>Close</button>
+              </div>
+            </>
+          ) : (
+            <>
+              <input value={form.name} onChange={e=>setForm({...form, name: e.target.value})} />
+              <input value={form.role} onChange={e=>setForm({...form, role: e.target.value})} />
+              <input value={form.location} onChange={e=>setForm({...form, location: e.target.value})} />
+              <select value={form.status} onChange={e=>setForm({...form, status: e.target.value})}>
+                <option>Active</option><option>Idle</option><option>Offline</option>
+              </select>
+              <textarea placeholder="Notes" value={form.notes} onChange={e=>setForm({...form, notes: e.target.value})} />
+              <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+                <button className="secondary" onClick={()=>{ setForm(person); setEditing(false); }}>Cancel</button>
+                <button onClick={save}>Save</button>
+              </div>
+            </>
+          )}
+        </div>
+      );
+    }
+
+    // Render
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+
+    // Wire up top-level import/export/reset buttons (they interact with React through DOM events)
+    document.getElementById('exportCsv').addEventListener('click', ()=> {
+      // trigger React export button by dispatching click to internal element via query - simpler: call exported function via custom event
+      const evt = new Event('export-csv');
+      window.dispatchEvent(evt);
+    });
+
+    // Instead of coupling to React internals, we also expose global functions using window for simplicity:
+    window.performExportCSV = () => {
+      // find a React root and call export - for simplicity, simulate clicking the inner export.
+      // But the React export is bound to internal state; to keep this example self-contained we'll call the DOM export in the center card:
+      const centerExport = document.querySelector('.card.list button[onclick*="exportCSV"]');
+      if(centerExport) centerExport.click();
+      else {
+        // fallback: build CSV from localStorage
+        try{
+          const raw = localStorage.getItem('tracking_people_v1');
+          const people = JSON.parse(raw);
+          const header = ['id','name','role','status','location','coords_lat','coords_lng','lastSeen','notes'];
+          const rows = people.map(p => [
+            p.id, p.name, p.role, p.status, p.location,
+            p.coords?.lat ?? '', p.coords?.lng ?? '', p.lastSeen, (p.notes||'')
+          ]);
+          const csv = [header.join(','), ...rows.map(r => r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(','))].join('\\n');
+          const blob = new Blob([csv], {type:'text/csv'});
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a'); a.href = url; a.download = `people_${new Date().toISOString()}.csv`; a.click(); URL.revokeObjectURL(url);
+        }catch(e){ alert('Could not export CSV: '+e.message); }
+      }
+    };
+
+    // Wire Export button on header to call local export routine in the React app via global function:
+    document.getElementById('exportCsv').addEventListener('click', ()=> window.performExportCSV());
+
+    // Import file wiring: read file and dispatch a custom event with file text so React can pick it up.
+    const importInput = document.getElementById('importFile');
+    importInput.addEventListener('change', (e)=>{
+      const f = e.target.files[0];
+      if(!f) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const text = ev.target.result;
+        // Dispatch event with the CSV content
+        window.dispatchEvent(new CustomEvent('import-csv', {detail: {text}}));
+      };
+      reader.readAsText(f);
+      // clear input so same file can be chosen again if needed
+      e.target.value = '';
+    });
+
+    // Listen in the window and forward to React by finding the React root's component via custom hooks is complex;
+    // Instead, we attach global listener that React app picks up using window events.
+    // We'll add a small bridge: inside React we listen for these events. Add bridge here:
+    // (Because this part is outside React's scope, it won't reach App's scope — so we also add listeners inside App using window.addEventListener)
+  </script>
+
+  <!-- Small script inside a second Babel block to add window event listeners inside React via a mounted hook -->
+  <script type="text/babel">
+    // This small block makes React listen to import-csv and export-csv events at runtime.
+    const { useEffect } = React;
+    function RootEventBridge(){
+      useEffect(()=>{
+        function onImport(e){
+          // put CSV text into localStorage, then notify user by reloading data
+          try{
+            const text = e.detail && e.detail.text;
+            if(!text) return;
+            // Use the same import logic as in App by dispatching a custom DOM event that App will handle via storage changes.
+            // Simpler: parse CSV here and merge into localStorage dataset
+            const raw = localStorage.getItem('tracking_people_v1');
+            const people = raw ? JSON.parse(raw) : [];
+            const lines = text.split(/\\r?\\n/).filter(Boolean);
+            const header = lines.shift().split(',').map(h=>h.replace(/^"|"$/g,'').trim());
+            const newEntries = lines.map(line=>{
+              const cols = line.match(/(".*?"|[^",\\s]+)(?=\\s*,|$)/g) || line.split(',');
+              const obj = {};
+              header.forEach((h,i)=> obj[h]= (cols[i]||'').replace(/^"|"$/g,''));
+              const coords = (obj.coords_lat && obj.coords_lng) ? {lat: parseFloat(obj.coords_lat), lng: parseFloat(obj.coords_lng)} : undefined;
+              return {
+                id: Date.now()+Math.floor(Math.random()*10000),
+                name: obj.name||'Unknown',
+                role: obj.role||'Member',
+                status: obj.status||'Offline',
+                location: obj.location||'Unknown',
+                coords,
+                lastSeen: obj.lastSeen || new Date().toISOString(),
+                notes: obj.notes || ''
+              };
+            });
+            const merged = [...newEntries, ...people];
+            localStorage.setItem('tracking_people_v1', JSON.stringify(merged));
+            // notify and reload page so React picks it up from storage
+            alert('Imported ' + newEntries.length + ' rows. The dashboard will reload to show them.');
+            location.reload();
+          }catch(err){ alert('Import failed: ' + err.message); }
+        }
+        window.addEventListener('import-csv', onImport);
+        return ()=> window.removeEventListener('import-csv', onImport);
+      }, []);
+      return null;
+    }
+
+    // Mount the bridge under the same root by appending a portal node
+    const mount = document.createElement('div');
+    document.getElementById('root').appendChild(mount);
+    ReactDOM.createRoot(mount).render(React.createElement(RootEventBridge));
+  </script>
+
+</body>
+</html>
