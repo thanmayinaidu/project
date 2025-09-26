@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Tracking System Dashboard</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <!-- Basic styles (inline) -->
+  <style>
+    :root{
+      --bg:#f5f7fb; --card:#ffffff; --muted:#6b7280; --accent:#2563eb;
+      --success:#10b981; --danger:#ef4444;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;background:var(--bg);color:#0f172a}
+    .container{max-width:1200px;margin:24px auto;padding:18px;}
+    header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+    h1{font-size:20px;margin:0}
+    .controls{display:flex;gap:8px;align-items:center}
+    button{cursor:pointer;border:0;padding:8px 12px;border-radius:8px;background:var(--accent);color:white;font-weight:600}
+    button.secondary{background:#eef2ff;color:var(--accent);border:1px solid rgba(37,99,235,0.12)}
+    .layout{display:grid;grid-template-columns:260px 1fr 320px;gap:16px}
+    .card{background:var(--card);padding:14px;border-radius:12px;box-shadow:0 6px 18px rgba(15,23,42,0.06)}
+    input[type="text"],select,textarea{width:100%;padding:8px;border-radius:8px;border:1px solid #e6edf3}
+    .list table{width:100%;border-collapse:collapse;font-size:14px}
+    .list th,.list td{padding:10px;text-align:left;border-bottom:1px solid #f1f5f9}
+    .row-actions button{padding:6px 8px;border-radius:6px;border:1px solid #e6edf3;background:white;color:#111;font-weight:500;margin-right:6px}
+    .status{display:inline-block;padding:4px 8px;border-radius:999px;font-size:12px}
+    .status.active{background:rgba(16,185,129,0.12);color:var(--success);border:1px solid rgba(16,185,129,0.16)}
+    .status.idle{background:rgba(37,99,235,0.08);color:var(--accent);border:1px solid rgba(37,99,235,0.12)}
+    .status.offline{background:rgba(239,68,68,0.06);color:var(--danger);border:1px solid rgba(239,68,68,0.08)}
+    .search-block{display:flex;gap:8px;margin-bottom:12px}
+    .small{font-size:13px;color:var(--muted)}
+    .footer-page{display:flex;justify-content:space-between;align-items:center;margin-top:12px}
+    .map-placeholder{height:220px;border-radius:8px;background:linear-gradient(180deg,#f8fafc,#eef2ff);display:flex;align-items:center;justify-content:center;color:var(--muted);font-weight:600}
+    form.add-person{display:flex;flex-direction:column;gap:8px}
+    .file-input{display:none}
+    @media (max-width:960px){
+      .layout{grid-template-columns:1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Tracking System Dashboard</h1>
+      <div class="controls">
+        <button id="exportCsv">Export CSV</button>
+        <label class="secondary" style="padding:8px 10px;cursor:pointer;">
+          Import CSV
+          <input id="importFile" class="file-input" type="file" accept=".csv,text/csv" />
+        </label>
+        <button id="resetData" class="secondary">Reset Data</button>
+      </div>
+    </header>
+
+    <div id="root"></div>
+  </div>
+
+  <!-- React + ReactDOM + Babel (JSX in browser). For production you should bundle via Vite/CRA. -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- App code: JSX -->
+  <script type="text/babel">
+    const { useState, useEffect, useMemo } = React;
+
+    const SAMPLE = [
+      { id: 1, name: 'Aisha Khan', role: 'Field Agent', status: 'Active', location: 'Mumbai, India', coords: {lat:19.0760, lng:72.8777}, lastSeen: '2025-09-25T10:12:00Z', notes: 'Checking in' },
+      { id: 2, name: 'Ravi Patel', role: 'Coordinator', status: 'Offline', location: 'Pune, India', coords: {lat:18.5204,lng:73.8567}, lastSeen: '2025-09-24T18:40:00Z', notes: 'On leave' },
+      { id: 3, name: 'Priya Sharma', role: 'Volunteer', status: 'Active', location: 'Delhi, India', coords: {lat:28.7041,lng:77.1025}, lastSeen: '2025-09-26T06:20:00Z', notes: 'Arrived at site' },
+      { id: 4, name: 'Michael Chen', role: 'Analyst', status: 'Idle', location: 'Bengaluru, India', coords: {lat:12.9716,lng:77.5946}, lastSeen: '2025-09-26T02:05:00Z', notes: 'Reviewing data' },
+      { id: 5, name: 'Sara Ali', role: 'Driver', status: 'Active', location: 'Hyderabad, India', coords: {lat:17.3850,lng:78.4867}, lastSeen: '2025-09-25T22:30:00Z', notes: 'En route' },
+    ];
+
+    function loadFromStorage(){
+      try{
+        const raw = localStorage.getItem('tracking_people_v1');
+        if(!raw) return SAMPLE;
+        const parsed = JSON.parse(raw);
+        return parsed.length ? parsed : SAMPLE;
+      }catch(e){ return SAMPLE; }
+    }
+    function saveToStorage(data){ localStorage.setItem('tracking_people_v1', JSON.stringify(data)); }
+
+    function App(){
+      const [people, setPeople] = useState(loadFromStorage);
+      const [query, setQuery] = useState('');
+      const [statusFilter, setStatusFilter] = useState('All');
+      const [sortBy, setSortBy] = useState('lastSeen');
+      const [selected, setSelected] = useState(null);
+      const [page, setPage] = useState(1);
+      const PAGE_SIZE = 5;
+
+      useEffect(()=> saveToStorage(people), [people]);
+
+      // derived
+      const filtered = useMemo(()=>{
+        let list = people.filter(p => {
+          const q = query.trim().toLowerCase();
+          if(!q) return true;
+          return p.name.toLowerCase().includes(q) || p.role.toLowerCase().includes(q) || p.location.toLowerCase().includes(q) || (p.notes||'').toLowerCase().includes(q);
+        });
+        if(statusFilter !== 'All') list = list.filter(p => p.status === statusFilter);
+        list.sort((a,b)=>{
+          if(sortBy === 'name') return a.name.localeCompare(b.name);
+          if(sortBy === 'role') return a.role.localeCompare(b.role);
+          if(sortBy === 'status') return a.status.localeCompare(b.status);
+          // lastSeen default: newest first
+          return new Date(b.lastSeen) - new Date(a.lastSeen);
+        });
+        return list;
+      }, [people, query, statusFilter, sortBy]);
+
+      const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+      useEffect(()=>{ if(page>totalPages) setPage(1); }, [totalPages]);
+
+      const paged = filtered.slice((page-1)*PAGE_SIZE, page*PAGE_SIZE);
+
+      // CRUD
+      function addPerson(payload){
+        const newPerson = { id: Date.now(), ...payload, lastSeen: payload.lastSeen || new Date().toISOString() };
+        setPeople(prev => [newPerson, ...prev]);
+      }
+      function updatePerson(id, patch){
+        setPeople(prev => prev.map(p => p.id === id ? {...p, ...patch} : p));
+      }
+      function removePerson(id){
+        setPeople(prev => prev.filter(p => p.id !== id));
+        if(selected && selected.id === id) setSelected(null);
+      }
+      function exportCSV(){
+        const header = ['id','name','role','status','location','coords_lat','coords_lng','lastSeen','notes'];
+        const rows = people.map(p => [
+          p.id, p.name, p.role, p.status, p.location,
+          p.coords?.lat ?? '', p.coords?.lng ?? '', p.lastSeen, (p.notes||'')
+        ]);
+        const csv = [header.join(','), ...rows.map(r => r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(','))].join('\\n');
+        const blob = new Blob([csv], {type:'text/csv'});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = `people_${new Date().toISOString()}.csv`; a.click();
+        URL.revokeObjectURL(url);
+      }
+      function importCSV(text){
+        try{
+          const lines = text.split(/\\r?\\n/).filter(Boolean);
+          const header = lines.shift().split(',').map(h => h.replace(/^"|"$/g,'').trim());
+          const newEntries = lines.map(line=>{
+            // naive CSV parse splitting by comma outside quotes
+            const cols = line.match(/(".*?"|[^",\\s]+)(?=\\s*,|$)/g) || line.split(',');
+            const obj = {};
+            header.forEach((h,i)=> obj[h]= (cols[i]||'').replace(/^"|"$/g,''));
+            const coords = (obj.coords_lat && obj.coords_lng) ? {lat: parseFloat(obj.coords_lat), lng: parseFloat(obj.coords_lng)} : undefined;
+            return {
+              id: Date.now()+Math.floor(Math.random()*10000),
+              name: obj.name||'Unknown',
+              role: obj.role||'Member',
+              status: obj.status||'Offline',
+              location: obj.location||'Unknown',
+              coords,
+              lastSeen: obj.lastSeen || new Date().toISOString(),
+              notes: obj.notes || ''
+            };
+          });
+          setPeople(prev => [...newEntries, ...prev]);
+        }catch(e){ alert('Failed to import CSV: ' + e.message); }
+      }
+
+      // helper
+      function timeAgo(ts){
+        try{
+          const diff = Math.floor((Date.now() - new Date(ts).getTime())/1000);
+          if(diff<60) return diff + 's';
+          if(diff<3600) return Math.floor(diff/60)+'m';
+          if(diff<86400) return Math.floor(diff/3600)+'h';
+          return Math.floor(diff/86400)+'d';
+        }catch(e){ return '-'; }
+      }
+
+      // quick random status update (user triggered)
+      function randomizeStatuses(){
+        const states = ['Active','Idle','Offline'];
+        setPeople(prev => prev.map(p => ({...p, status: states[Math.floor(Math.random()*states.length)], lastSeen: new Date().toISOString()})));
+      }
+
+      return (
+        <div className="layout">
+          {/* left controls */}
+          <aside className="card">
+            <div style={{marginBottom:12}}>
+              <div className="small" style={{marginBottom:6}}>Search</div>
+              <div className="search-block">
+                <input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search name / role / location" />
+                <button className="secondary" onClick={()=>{ setQuery(''); setStatusFilter('All'); setSortBy('lastSeen'); }}>Clear</button>
+              </div>
+            </div>
+
+            <div style={{marginBottom:12}}>
+              <div className="small" style={{marginBottom:6}}>Filter</div>
+              <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}>
+                <option>All</option>
+                <option>Active</option>
+                <option>Idle</option>
+                <option>Offline</option>
+              </select>
+            </div>
+
+            <div style={{marginBottom:12}}>
+              <div className="small" style={{marginBottom:6}}>Sort by</div>
+              <select value={sortBy} onChange={e=>setSortBy(e.target.value)}>
+                <option value="lastSeen">Last Seen (newest)</option>
+                <option value="name">Name</option>
+                <option value="role">Role</option>
+                <option value="status">Status</option>
+              </select>
+            </div>
+
+            <div style={{marginTop:8}}>
+              <h4 style={{margin:'8px 0'}}>Add Quick Person</h4>
+              <QuickAdd onAdd={addPerson} />
+            </div>
+
+            <div style={{marginTop:14}}>
+              <div className="small" style={{marginBottom:6}}>Actions</div>
+              <div style={{display:'flex',gap:8}}>
+                <button className="secondary" onClick={randomizeStatuses}>Randomize</button>
+                <button onClick={()=>{ if(confirm('Clear all local data and reset to sample data?')){ setPeople(SAMPLE); localStorage.removeItem('tracking_people_v1'); }}}>Reset</button>
+              </div>
+            </div>
+          </aside>
+
+          {/* center list */}
+          <section className="card list">
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
+              <div style={{fontWeight:700}}>People ({filtered.length})</div>
+              <div style={{display:'flex',gap:8}}>
+                <button onClick={()=>setPage(1)} className="secondary">First</button>
+                <div className="small">Page {page} / {totalPages}</div>
+                <button onClick={()=>setPage(p=>Math.max(1,p-1))} className="secondary">Prev</button>
+                <button onClick={()=>setPage(p=>Math.min(totalPages,p+1))} className="secondary">Next</button>
+              </div>
+            </div>
+
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th><th>Role</th><th>Location</th><th>Status</th><th>Last Seen</th><th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {paged.map(p => (
+                  <tr key={p.id}>
+                    <td>
+                      <div style={{fontWeight:600}}>{p.name}</div>
+                      <div className="small">{p.notes}</div>
+                    </td>
+                    <td>{p.role}</td>
+                    <td>{p.location}</td>
+                    <td>
+                      <span className={`status ${p.status.toLowerCase()}`}>
+                        {p.status}
+                      </span>
+                    </td>
+                    <td className="small">{timeAgo(p.lastSeen)} ago</td>
+                    <td className="row-actions">
+                      <button onClick={()=>{ setSelected(p); }}>View</button>
+                      <button onClick={()=>updatePerson(p.id,{ status: p.status === 'Active' ? 'Idle' : 'Active', lastSeen: new Date().toISOString() })}>Toggle</button>
+                      <button onClick={()=>{ if(confirm('Delete ' + p.name + '?')) removePerson(p.id); }} style={{borderColor:'#ffe7e7', color:'var(--danger)'}}>Delete</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <div className="footer-page">
+              <div className="small">Showing { (page-1)*PAGE_SIZE + 1 } - { Math.min(page*PAGE_SIZE, filtered.length) } of {filtered.length}</div>
+              <div style={{display:'flex',gap:8}}>
+                <button className="secondary" onClick={()=>{ const blob = new Blob([JSON.stringify(people, null, 2)], {type:'application/json'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='people.json'; a.click(); URL.revokeObjectURL(url); }}>Download JSON</button>
+                <button onClick={exportCSV}>Export CSV</button>
+              </div>
+            </div>
+          </section>
+
+          {/* right panel */}
+          <aside className="card">
+            <div style={{marginBottom:12}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                <div style={{fontWeight:700}}>Map (placeholder)</div>
+                <div className="small">Realtime: off</div>
+              </div>
+              <div className="map-placeholder" style={{marginTop:8}}>
+                Map placeholder — integrate Leaflet / Mapbox with coordinates
+              </div>
+            </div>
+
+            <div>
+              <div style={{fontWeight:700, marginBottom:8}}>Details</div>
+              {selected ? (
+                <PersonDetails person={selected} onUpdate={updatePerson} onDelete={removePerson} onClose={()=>setSelected(null)} />
+              ) : (
+                <div className="small">Select a person to view details here.</div>
+              )}
+            </div>
+          </aside>
+        </div>
+      );
+    }
+
+    function QuickAdd({ onAdd }){
+      const [name,setName] = useState('');
+      const [role,setRole] = useState('');
+      const [location,setLocation] = useState('');
+      function submit(e){
+        e.preventDefault();
+        if(!name) return alert('Name required');
+        onAdd({ name, role: role||'Member', status: 'Offline', location: location||'Unknown', coords: undefined, notes: '' });
+        setName(''); setRole(''); setLocation('');
+      }
+      return (
+        <form className="add-person" onSubmit={submit}>
+          <input placeholder="Full name" value={name} onChange={e=>setName(e.target.value)} />
+          <input placeholder="Role" value={role} onChange={e=>setRole(e.target.value)} />
+          <input placeholder="Location" value={location} onChange={e=>setLocation(e.target.value)} />
+          <div style={{display:'flex',justifyContent:'flex-end'}}><button type="submit">Add</button></div>
+        </form>
+      );
+    }
+
+    function PersonDetails({ person, onUpdate, onDelete, onClose }){
+      const [editing, setEditing] = useState(false);
+      const [form, setForm] = useState(person);
+      useEffect(()=> setForm(person), [person]);
+
+      function save(){
+        onUpdate(person.id, { ...form });
+        setEditing(false);
+      }
+      return (
+        <div>
+          {!editing ? (
